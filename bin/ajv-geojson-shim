@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# ajv-geojson-shim - A wrapper for ajv-cli with GeoJSON file support
+#
+# DESCRIPTION:
+#   This script serves as a proxy to the real ajv-cli, offering transparent
+#   handling of .geojson files. It creates temporary copies of .geojson files
+#   with a .json extension, which allows for proper validation with ajv-cli.
+#
+# USAGE:
+#   ./ajv-geojson-shim [ajv-cli options and arguments]
+#
+# EXAMPLES:
+#   ./ajv-geojson-shim validate -s schema.json -d data.geojson
+#   ./ajv-geojson-shim test -s schema.json -d data.geojson
+#
+# NOTES:
+#   - All arguments are passed through to ajv-cli
+#   - Any .geojson files are automatically converted to .json for processing
+#   - Temporary files are cleaned up when the script exits
+#
+# AUTHOR:
+#   Carsten Witt, https://tomkyle.net
+#
+
+# =============================================================================
+# Setup
+# =============================================================================
+
+set -euo pipefail
+
+# Global variables
+VERSION="1.0.0"
+TEMP_FILES=()
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+# Show script usage
+show_usage() {
+  cat << EOF
+Usage: $(basename "$0") [ajv-cli options and arguments]
+
+Wrapper for ajv-cli that adds GeoJSON file support.
+All arguments are passed through to the underlying ajv-cli tool.
+EOF
+}
+
+# Show version information
+show_version() {
+  echo "ajv-geojson-shim version ${VERSION}"
+}
+
+# Process all arguments, trigger argument replacing for geojson
+process_arguments() {
+  local args=("$@")
+  local processed_args=()
+
+  for arg in "${args[@]}"; do
+	processed_arg="$arg"
+	if [[ $arg == *.geojson ]]; then
+		processed_arg=$(replace_file_arg "$arg")
+	fi
+    processed_args+=("$processed_arg")
+  done
+
+  # Return processed arguments properly quoted
+  printf "%q " "${processed_args[@]}"
+}
+
+# Process a file argument, creating a temp json copy if it's a geojson file
+replace_file_arg() {
+  local arg="$1"
+  local tempfile
+  local tempfile_json
+
+
+  # Omit if already json
+  if [[ $arg == *.json ]]; then
+    echo "$arg"
+    return 0
+  fi
+
+  # Make a temp file with .json extension
+  tempfile=$(mktemp /tmp/ajv.XXXXXX)
+  tempfile_json="${tempfile}.json"
+  mv "${tempfile}" "${tempfile_json}"
+
+  # Copy the .geojson file to the temp file
+  if ! cp -- "$arg" "${tempfile_json}"; then
+    echo "Error: Failed to copy $arg to temporary file" >&2
+    return 1
+  fi
+
+  # Add the temp file to the list of files to be cleaned up
+  TEMP_FILES+=("${tempfile_json}")
+  echo "${tempfile_json}"
+}
+
+# Find and execute the ajv CLI tool
+execute_ajv() {
+  local args=("$@")
+
+  # Check which ajv implementation is available
+  if command -v ajv &>/dev/null; then
+    ajv "${args[@]}"
+    return $?
+  elif command -v npx &>/dev/null; then
+    npx ajv "${args[@]}"
+    return $?
+  else
+    echo "❌ ERROR: 'ajv' not found. Please install ajv-cli or @jirutka/ajv-cli" >&2
+    return 1
+  fi
+}
+
+# Clean up temporary files
+cleanup() {
+  if [[ ${#TEMP_FILES[@]} -gt 0 ]]; then
+    rm -f "${TEMP_FILES[@]}"
+  fi
+}
+
+# =============================================================================
+# Main Function
+# =============================================================================
+
+main() {
+  # Set up cleanup on exit
+  trap cleanup EXIT
+
+  # Show usage if no arguments are provided
+  if [[ $# -eq 0 ]]; then
+    show_usage
+    return 0
+  fi
+
+  # Handle special flags
+  if [[ $# -eq 1 ]]; then
+    case "$1" in
+      --help|-h)
+        show_usage
+        return 0
+        ;;
+      --version|-v)
+        show_version
+        return 0
+        ;;
+    esac
+  fi
+
+  # Process arguments
+  local processed_args_string
+  processed_args_string=$(process_arguments "$@")
+
+  # Convert processed_args_string back to an array
+  local processed_args=()
+  eval "processed_args=(${processed_args_string})"
+
+  # Execute ajv with processed arguments
+  execute_ajv "${processed_args[@]}"
+  return $?
+}
+
+# =============================================================================
+# Entry Point
+# =============================================================================
+
+# Only execute main if script is not being sourced (for testing)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+  exit $?
+fi

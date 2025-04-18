@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:            # runs on every push (branches & tags)
+  pull_request:    # runs on every PR update
+
+jobs:
+  test:
+    name: Unit and Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ajv CLI
+        run: npm install -g @jirutka/ajv-cli
+
+      - name: Install ajv-geojson-shim in the project
+        run: make install
+
+      - name: Run test suite
+        run: make test
